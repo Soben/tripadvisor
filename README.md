@@ -1,7 +1,7 @@
 
 # TripAdvisor Content API PHP Library 
 
-![tripadvisor](https://static.tacdn.com/img2/langs/tr/branding/rebrand/TA_logo_primary_v2.svg)
+![tripadvisor](https://static.tacdn.com/img2/branding/rebrand/TA_logo_primary.svg)
 
 # API Description
 Approved users of the TripAdvisor Content API can use this API. It can pull a limited set of information about locations. Best with a list of location IDs.
