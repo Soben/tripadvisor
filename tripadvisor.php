@@ -1,59 +1,78 @@
 <?php
 
-class tripadvisor {
-	private $config = [
-		'root'       => 'data',
-		'cache_time' => (60*24),
-		'key'        => 'df87a091ea2941e6a7f6c850c574659d',
-		'v'          => '2.0',
-		'url'        => 'http://api.tripadvisor.com/api/partner/',
-		'comment'    => true
-	];
+class TripAdvisorAPI {
+	protected $config = [];
+
+	public function __construct($config = [])
+	{
+		$this->config = array_merge([
+			'key'        		=> null,
+			'cachePath'  		=> 'data',
+			'cacheExpiration' 	=> (60*24),
+			'v'          		=> '2.0',
+			'url'        		=> 'http://api.tripadvisor.com/api/partner/',
+			'debug'				=> false,
+		], $config);
+
+		if (!$this->config['key']) {
+			throw new \Exception('Missing API Key');
+		}
+	}
 	
-	public  $cache = '';
-	public  $debug = '';
-	public  $last  = '';
 	
-	
-	public function check($url){
-		 $url = $this->config['root'].'/'.md5($url).'.json';
-		 if (file_exists($url)) {
-		  $this->debug =@file_get_contents($url);
-		  return false; } 
-		return true;
-		
+	protected function getCache($name)
+	{
+		$cacheFile = $this->generateCacheTokenPath($name);
+		if (file_exists($cacheFile)) {
+			$lastModified = filemtime($cacheFile);
+			$ageOfFile = time() - $lastModified;
+			if ($this->config['cacheExpiration'] > $ageOfFile) return false;
+
+			$content = @file_get_contents($cacheFile);
+			if (!$content) return false;
+
+			return json_decode($content);
 		}
 		
-	public function getCurl($url){
-		    $this->last=$url;
-			if ($this->debug=='' or $this->check($url)):
+		return false;
+	}
+
+	protected function setCache($name, $data)
+	{
+		$cacheFile = $this->generateCacheTokenPath($name);
+
+		return file_put_contents($cacheFile, json_encode($data));
+	}
+
+	protected function generateCacheTokenPath($string)
+	{
+		$token = md5($string);
+		return "{$this->config['cachePath']}/{$token}.json";
+	}
 		
-				$ch = curl_init ();
-				curl_setopt($ch, CURLOPT_URL, $url);
-				curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);				
-			      $this->cache['json'][$this->last]   = curl_exec($ch);					
-			      $this->cache['decode'][$this->last] = json_decode($this->cache['json'][$this->last],true);
-				  
-			      if (!isset($this->cache['decode'][$this->last]['error'])):
-						$file = fopen($this->config['root'].'/'.md5($url).'.json','w');
-						fwrite($file,$this->cache['json'][$this->last]);
-						fclose($file);
-					elseif (file_exists($this->config['root'].'/'.md5($url).'.json')):
-						$this->debug =@file_get_contents($url);
-						$this->cache['json'][$this->last] = $this->debug;						
-				  endif;
-				
-				 $this->cache['decode'][$this->last] = json_decode($this->cache['json'][$this->last],true);
-				curl_close($ch);	
+	protected function getCurl($url)
+	{
+		$cacheData = $this->getCache($url);
+		if ($this->config['debug'] || $cacheData === false) {
 			
-			else:
-			 $this->cache['json'][$this->last] = $this->debug;
-			 $this->cache['decode'][$this->last] = json_decode($this->cache['json'][$this->last],true);
-			endif;
+			$ch = curl_init ();
+			curl_setopt($ch, CURLOPT_URL, $url);
+			curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+
+			$apiResponse = curl_exec($ch);
+			$apiResponseDecoded = json_decode($apiResponse);
+
+			curl_close($ch);
 			
-			return $this->cache['decode'][$this->last];
-			
+			if ($apiResponseDecoded !== false && !isset($apiResponseDecoded->error)) {
+				$this->setCache($url, $apiResponseDecoded);
+			}
+		} else {
+			$apiResponseDecoded = $cacheData;
 		}
+		
+		return $apiResponseDecoded;
+	}
 		
   /*
   	query some keywords 
@@ -62,116 +81,113 @@ class tripadvisor {
   
   */	
 		
-	public function getQuery($template,$value,$query='',$type=''){	
-		if ($query!='') $query = '&'.http_build_query($query);
+	protected function getQuery($template, $value, $query = null, $type = '')
+	{
+		if (is_array($query)) $query = '&'.http_build_query($query);
+		
 		$this->config['type']     = ($type=='')?'':$type;
-		$this->config['template'] = $template;	
-		$this->config['value']    = $value;	
+		$this->config['template'] = $template;
+		$this->config['value']    = $value;
+		
 		if ($template=='location_mapper' and $this->config['type']=='') $this->config['type']='hotels';	
 		foreach($this->config as $key => $val){
-			 $arrKeys[] = '{'.$key.'}';
-			 $arrVals[] = $val;
-	     }
+			$arrKeys[] = '{'.$key.'}';
+			$arrVals[] = $val;
+	    }
 		 
-		$pattern=[
-		'location_mapper' => '{url}{v}/{template}/{value}?key={key}-mapper&category={type}'.$query,
-		'default'         => '{url}{v}/{template}/{value}/{type}?key={key}'.$query];
-	
-	    $this->getCurl(str_replace($arrKeys,$arrVals,((isset($pattern[$template]))?$pattern[$template]:$pattern['default'])));
-		if ($this->config['comment']):
-	    return $this->{'get'.(($this->config['type']=='')?'':'Detail').'Formatter'}();	
-		else:
-		return $this->cache['decode'][$this->last];
-		endif;
-		}
-	private function getFormatter()	{
-		$json   = $this->cache['decode'][$this->last];
-		$return = '';
-		if ($this->config['template']=='map'):
-		return $this->getDetailFormatter();
-		else:
-			$row = $json;
-			$return = [
-				'isim'         => $row['name'],
-				'yorum'        => $row['num_reviews'],
-				'yorum_detay'  => $row['trip_types'],
-				'yorumlar'     => $row['reviews'],
-				'puan'     	   => $row['rating'],
-				'puanlama'     => $row['review_rating_count'],
-				'puan_detay'   => $row['subratings'],
-				'konum_id'     => $row['ranking_data']['geo_location_id'],
-				'konum'	       => $row['ranking_data']['geo_location_name'],				
-				'location_id'  => $row['location_id'],
-				'sıralama'     => [
-									'toplam' => $row['ranking_data']['ranking_out_of'],
-									'sıra'   => $row['ranking_data']['ranking']
-									],
-				'harita_x'	   => $row['latitude'],
-				'harita_y'	   => $row['longitude'],
-				'resim'        => $row['rating_image_url'],
-				'site_url'     => $row['write_review'],
-				'resim_url'    => $row['see_all_photos'],
-				
-			];
-			
+		$urlPatterns = [
+			'location_mapper' => '{url}{v}/{template}/{value}?key={key}-mapper&category={type}'.$query,
+			'location'        => '{url}{v}/{template}/{value}/{type}?key={key}'.$query
+		];
+		
+		$generatedURL = str_replace($arrKeys,$arrVals,((isset($urlPatterns[$template]))?$urlPatterns[$template]:$urlPatterns['location']));
+		$response = $this->getCurl($generatedURL);
+		
+		return $response;
+	}
 
-		endif;
-		return $return;
+
+	protected function formatResponse($data)
+	{
+		// @todo format based on the "type"?
+		$formatted = [
+			'id' 			=> $data->location_id,
+			'name'         	=> $data->name,
+			'address'		=> $data->address_obj,
+			
+			'latitude'	   	=> $data->latitude,
+			'longitude'	   	=> $data->longitude,
+			'url_web'		=> $data->web_url,
+			'url_photos'    => $data->see_all_photos,
+			'category'		=> $data->category->name,
+		];
+
+		if (isset($data->num_reviews)) {
+			$formatted['reviews'] = (object)[
+				'total' => $data->num_reviews,
+			];
+		}
+		if (isset($data->rating)) {
+			$formatted['rating'] = (object)[
+				'total' 	=> $data->rating,
+				'by_stars'	=> $data->review_rating_count,
+				'image' 	=> $data->rating_image_url,
+			];
+		}
+		if (isset($data->price_level)) {
+			$formated['price'] = $data->price_level;
+		}
+		if (isset($data->rankranking_dataing)) {
+			$formatted['ranking'] = (object)[
+				'total' 		=> $data->ranking_data->ranking_out_of,
+				'rank' 			=> $data->ranking_data->ranking,
+				'string' 		=> $data->ranking_data->ranking_string,
+			];
+		}
+		if (isset($data->ranking_data)) {
+			$formatted['geo_region'] = (object)[
+				'id' 	=> $data->ranking_data->geo_location_id,
+				'name' 	=> $data->location_string,
+			];
 		}
 		
-	private function getDetailFormatter() {
-		$json   = $this->cache['decode'][$this->last];	
-		$return = [];
-		if (!isset($json['data'])) return $return;
-		if (($this->config['template']=='map') or ($this->config['template']=='location')):
-			foreach($json['data'] as $row):
-			$row['distance'] = (isset($row['distance']))?$row['distance']:'';
-			
-			$return[] = [
-				'isim'         => $row['name'],
-				'turu'         => $row['category']['name'],
-				'distance'     => $row['distance'],
-				'yorum'        => $row['num_reviews'],
-				'puan'     	   => $row['rating'],
-				'konum_id'     => $row['ranking_data']['geo_location_id'],
-				'konum'	       => $row['ranking_data']['geo_location_name'],				
-				'location_id'  => $row['location_id'],
-				'sıralama'     => [
-									'toplam' => $row['ranking_data']['ranking_out_of'],
-									'sıra'   => $row['ranking_data']['ranking']
-									],
-				'harita_x'	   => $row['latitude'],
-				'harita_y'	   => $row['longitude'],
-				'resim'        => $row['rating_image_url'],
-				'api_url'      => $row['api_detail_url'],
-				'site_url'     => $row['write_review'],
-				'resim_url'    => $row['see_all_photos'],
-				
-			];
-			
-			
-			endforeach;
-		else:
-		  foreach ($json['data'] as $row):
-		  	$return[] = [
-				'isim'         => $row['name'],
-				'distance'     => $row['distance'],
-				'location_id'  => $row['location_id']
-			];
-		  endforeach;
-		endif;
-		return $return;
-		}
-  
-  
-  	public function getHotels($values,$q) {
-			$data = $this->getQuery('location_mapper',$values,['q'=>$q,'lang'=>'tr']);
-			if (!isset($data[0]['location_id'])) return false;
-			$this->config['comment'] = false;
-			return $this->getQuery('location',$data[0]['location_id'],['lang'=>'tr']);		
-			
-		}
-  
-}
+		return (object)$formatted;
+	}
 
-?>
+	// Calls
+	public function find($type, $geocode, $query = "", $language = "en") {
+		$response = $this->getQuery('location_mapper', $geocode, ['q'=>$query,'lang'=>$language], $type);
+		if (count($response->data) <= 0) return false;
+
+		$parsedResults = [];
+		foreach ($response->data as $current) {
+			$details = $this->getSingle($current->location_id);
+			if ($details) {
+				$parsedResults[] = $details;
+			}
+		}
+		return $parsedResults;
+	}
+
+	public function getSingle($id, $language = "en") {
+		$response = $this->getQuery('location', $id, ['lang'=> $language]);
+		if (!isset($response->location_id)) return false;
+
+		return $this->formatResponse($response);
+	}
+
+	public function getHotels($geocode, $query = "", $language = "en")
+	{
+		return $this->find('hotels', $geocode, $query = "", $language);
+	}
+
+	public function getAttractions($geocode, $query = "", $language = "en")
+	{
+		return $this->find('attractions', $geocode, $query = "", $language);
+	}
+
+	public function getRestaurants($geocode, $query = "", $language = "en")
+	{
+		return $this->find('restaurants', $geocode, $query = "", $language);
+	}
+}
